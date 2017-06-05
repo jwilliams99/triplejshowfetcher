@@ -22,9 +22,6 @@ my %shows = (
            },
 );
 
-#my $show     = '';
-#my $sftpHost = 'ryszard.us';
-
 my %opts = (
     #           Usage:                                     Value
     show      => [" --show [".join(' | ', keys %shows)."]", 0                             ],
@@ -124,6 +121,12 @@ for(my$i=$start;$i<2000;$i++) {
     }
     #my $retval = `ffmpeg -loglevel 8 -y -i $url -acodec copy $showDir/${i}-$desc.m4a 2>&1`;
     #print "retval: $retval, $!\n";
+}
+my $fragCount = `ls $showDir/*.m4a 2>/dev/null| wc -l`;
+if ($fragCount == 0) {
+    print "No fragments downloaded..\n";
+    remove_tree $showDir; 
+    exit;
 }
 `cd $showDir;ls -1v *.m4a | awk '{print "file "\$1}' > "segments.txt"`;
 
