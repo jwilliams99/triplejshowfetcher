@@ -99,9 +99,12 @@ for(my$i=$start;$i<2000;$i++) {
     next if (-f "$showDir/${i}-$desc.m4a");
 
     #http://abcradiomodhls.abc-cdn.net.au/i/triplej/audio/sfl-1-2017-03-29.m4a/segment7_0_a.ts?null=0'. 
-    my $url = "http://abcradiomodhls.abc-cdn.net.au/i/triplej/audio/$opts{show}[1]-1-$showDate.m4a/segment${i}_0_a.ts?null=0";
+    #http://abcradiomodhls.abc-cdn.net.au/i/triplej/audio/rac-2017-06-06.m4a/segment1_0_a.ts?null=0
+    #http://abcradiomodhls.abc-cdn.net.au/i/triplej/audio/rac-1-2017-06-06.m4a/segment1_0_a.ts?null=0
+    my $url = "http://abcradiomodhls.abc-cdn.net.au/i/triplej/audio/$opts{show}[1]-$showDate.m4a/segment${i}_0_a.ts?null=0";
     print "Downloading segment $i: $url \n";
     my $r = $ua->get($url);
+    print Dumper($r) if ($opts{debug}[1] > 0);
 
     if ($r->is_success) {
         getstore( $url, "$showDir/${i}-$desc.m4a");
@@ -128,6 +131,11 @@ if ($fragCount == 0) {
     remove_tree $showDir; 
     exit;
 }
+if ($fragCount < 1800) {
+    print "Not enough fragments downloaded, we need around 1800 and have $fragCount..\n";
+    exit;
+}
+
 `cd $showDir;ls -1v *.m4a | awk '{print "file "\$1}' > "segments.txt"`;
 
 print "Concatenating downloaded fragments\n";
