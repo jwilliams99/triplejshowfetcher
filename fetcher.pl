@@ -11,13 +11,17 @@ use File::Path qw(make_path remove_tree);
 
 my %shows = (
     sfl => {
+             host => 'http://www.abc.net.au/',
              url => 'http://www.abc.net.au/triplej/shortfastloud/',
              desc => 'Short_Fast_Loud',
+             lookfor => 'Short.Fast.Loud',
              idv3 => { album => 'Short Fast Loud', artist => 'Triple J' }
            },
     rac => {
+             host => 'http://www.abc.net.au/',
              url  => 'http://www.abc.net.au/triplej/racket/',
              desc => 'Racket',
+             lookfor => 'The Racket',
              idv3 => { album => 'Racket', artist => 'Triple J' }
            },
 );
@@ -27,7 +31,8 @@ my %opts = (
     show      => [" --show [".join(' | ', keys %shows)."]", 0                             ],
     sftphost  => [" [ --sftphost <host name> ]",            'ryszard.us'                  ],
     sftpuser  => [" [ --sftpuser <user> ]",                 'sftpuser'                    ],
-    proxy     => [" [ --proxy <proxy> ]",                   '192.168.88.230:8080'         ],
+    proxy     => [" [ --proxy <proxy> ]",                   undef                         ],
+    #proxy     => [" [ --proxy <proxy> ]",                   '192.168.88.230:8080'         ],
     debug     => [" [ --debug [ 0 | 1 ] ]",                 0                             ], 
     keep      => [" [ --keep [ 0 | 1 ] ]",                  0                             ], # keep downloaded fragments
     ssl_hn    => [" [ --ssl_hn [ 0 | 1 ] ]",                0                             ], # ssl verify hostname http://search.cpan.org/~oalders/libwww-perl-6.26/lib/LWP/UserAgent.pm#ssl_opts
@@ -51,14 +56,15 @@ if ( ! grep { /$opts{show}[1]/ } keys %shows ){
     &usage;
 }
 
+my $host = $shows{ $opts{show}[1] }->{ host };
 my $url  = $shows{ $opts{show}[1] }->{ url };
 my $desc = $shows{ $opts{show}[1] }->{ desc };
 
-my $segmentUrlBase = 'http://abcradiomodhls.abc-cdn.net.au/i/triplej/audio/';
-
 my $ua = LWP::UserAgent->new();
 $ua->ssl_opts( verify_hostname => $opts{ssl_hn}[1] );
-$ua->proxy(['http', 'https', 'ftp'], 'http://'.$opts{proxy}[1].'/');
+if (defined $opts{proxy}[1]){
+    $ua->proxy(['http', 'https', 'ftp'], 'http://'.$opts{proxy}[1].'/');
+}
 
 print STDERR "Fetching $url\n";
 my $r = $ua->get($url);
@@ -70,23 +76,77 @@ my $content = $r->decoded_content;
 my $p = HTML::TokeParser->new(\$content);
 
 # locate the current date of the show
-my $showDate = '';
+my $showDate = '';my $showUrl = '';
 print STDERR "Toke parsing\n" if ($opts{debug}[1] > 0);
 while( my $t = $p->get_tag("a") ){
 
-    if (defined $t->[1]->{class} && $t->[1]->{class} eq 'listen') {
+    print STDERR Dumper($t->[1]->{title}) if ($opts{debug}[1] > 0); 
+    if (defined $t->[1]->{title} && $t->[1]->{title} eq $shows{ $opts{show}[1] }->{lookfor}) {
         print STDERR Dumper($t->[1]->{href}) if ($opts{debug}[1] > 0); 
-        $t->[1]->{href} =~ m!([\d]{4}-[\d]{2}-[\d]{2})$!;
-        print "Found date $1\n" if ($opts{debug}[1] > 0);
-        $showDate = $1;
+        $showUrl = $t->[1]->{href};
+        last;
+    }
+}
+# now weha vethe url we need to go and ge the page
+$r = $ua->get($host.'/'.$showUrl);
+
+# oncw we have the page, we need to parse it and look for 
+# the script tag that has a m3u8 file.  this file contains
+# a link to a file that has all the sengments to download
+#print Dumper($r->decoded_content);
+
+print STDERR "Toke parsing\n" if ($opts{debug}[1] > 0);
+$content = $r->decoded_content;
+$p = HTML::TokeParser->new(\$content);
+
+# we're looking for this:
+# http://abcradiomodhls.abc-cdn.net.au/i/triplej/audio/rac-2017-07-11.m4a/master.m3u8
+my $segmentURL;
+while( my $t = $p->get_tag("div") ){
+
+    if (defined $t->[1]->{class} && $t->[1]->{class} eq 'comp-audio-player-player') {
+        $p->get_tag("script","/script");
+        my $c = $p->get_text();
+        foreach my $line (split(/\n/, $c)) {
+            if ($line =~ /m3u8/) {
+                my @e = split(/\"/, $line);
+                print $e[3];
+                $e[3] =~ /.*(\d\d\d\d)-(\d\d)-(\d\d).*/;
+                $showDate = "$1-$2-$3";
+                $segmentURL = $e[3];
+            }
+        }
     }
 }
 
-my $showDir  = "$opts{show}[1]-$showDate";
 if (! $showDate){
     die "Problem parsing page, unable to find show date!"
 }
+my $showDir  = "$opts{show}[1]-$showDate";
 make_path("$opts{show}[1]-$showDate");
+
+$r = $ua->get($segmentURL);
+my @segments;
+if ($r->is_success){
+    my $tmp = $r->decoded_content;
+    foreach my $line(split(/\n/, $tmp)){
+        chomp;
+        if ($line =~ /^http/){
+            $r=$ua->get($line);
+            if ($r->is_success){
+                foreach my $line (split(/\n/, $r->decoded_content)){
+                    if ($line =~ /^http/) {
+                        push @segments, $line;
+                    }
+                } 
+            } else {
+                die "Couldnt download segments file, ".$r->status_line;
+            }
+        }
+    }
+} else {
+    die "Couldnt download m3u8 file, ".$r->status_line;
+}
 
 # check to see if we've downloaded some before
 my $start = `ls -1v $showDir/*m4a 2>/dev/null | tail -1 | cut -d\/ -f2 | cut -d\- -f1`; chomp $start; 
@@ -94,20 +154,17 @@ print "Last number downloaded: $start\n" if ($opts{debug}[1] > 0);
 if ($start =~ /[^\d]+/) { $start = 1 } else { $start++ }
 print "Begining at file $start\n" if ($opts{debug}[1] > 0);
 
-for(my$i=$start;$i<2000;$i++) {
+my $i = 0;
+foreach my $segment(@segments) {
 
     next if (-f "$showDir/${i}-$desc.m4a");
 
-    #http://abcradiomodhls.abc-cdn.net.au/i/triplej/audio/sfl-1-2017-03-29.m4a/segment7_0_a.ts?null=0'. 
-    #http://abcradiomodhls.abc-cdn.net.au/i/triplej/audio/rac-2017-06-06.m4a/segment1_0_a.ts?null=0
-    #http://abcradiomodhls.abc-cdn.net.au/i/triplej/audio/rac-1-2017-06-06.m4a/segment1_0_a.ts?null=0
-    my $url = "http://abcradiomodhls.abc-cdn.net.au/i/triplej/audio/$opts{show}[1]-$showDate.m4a/segment${i}_0_a.ts?null=0";
-    print "Downloading segment $i: $url \n";
-    my $r = $ua->get($url);
-    print Dumper($r) if ($opts{debug}[1] > 0);
+    print "Downloading segment: $segment \n";
+    my $r = $ua->get($segment);
+#    print Dumper($r) if ($opts{debug}[1] > 0);
 
     if ($r->is_success) {
-        getstore( $url, "$showDir/${i}-$desc.m4a");
+        getstore( $segment, "$showDir/$i-$desc.m4a");
         my $sleep = int(rand( $opts{rand_wait}[1] ));
         print "Sleeping $sleep seconds\n" if ($opts{debug}[1] > 0 && $opts{rand_wait}[1] > 0);
         sleep $sleep;
@@ -116,12 +173,13 @@ for(my$i=$start;$i<2000;$i++) {
         if ($r->code eq '404') {
             last;
         } else {
-            print "Fatal error when downloading $url, bailing\n";
+            print "Fatal error when downloading $segment, bailing\n";
             print "\t".$r->code."\n";
             print Dumper($r) if ($opts{debug}[1] > 0);
             die 54;
         }
     }
+    $i++;
     #my $retval = `ffmpeg -loglevel 8 -y -i $url -acodec copy $showDir/${i}-$desc.m4a 2>&1`;
     #print "retval: $retval, $!\n";
 }
@@ -131,8 +189,8 @@ if ($fragCount == 0) {
     remove_tree $showDir; 
     exit;
 }
-if ($fragCount < 1800) {
-    print "Not enough fragments downloaded, we need around 1800 and have $fragCount..\n";
+if ($fragCount < 1000) {
+    print "Not enough fragments downloaded, we need around 1000 and have $fragCount..\n";
     exit;
 }
 
