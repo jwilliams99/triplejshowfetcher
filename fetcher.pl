@@ -14,17 +14,17 @@ my $path = '/triplej/programs';
 
 my %shows = (
     sfl => {
-             showPath => '/short-fast-loud/short.fast.loud/8773180',
-             desc => 'Short_Fast_Loud',
-             lookfor => 'Short.Fast.Loud',
-             idv3 => { album => 'Short Fast Loud', artist => 'Triple J' }
+             showPath => '/short-fast-loud',
+             lookfor  => '/short-fast-loud/short.fast.loud/',
+             showURL  => '',                        # where we look to download the file that has the segments in it
+             desc     => 'Short_Fast_Loud',
+             idv3     => { album => 'Short Fast Loud', artist => 'Triple J' }
            },
     rac => {
              showPath => '/the-racket',
              lookfor  => '/the-racket/the-racket/', # what to look for when we parse the page looking for the show id
              showURL  => '',                        # where we look to download the file that has the segments in it
              desc     => 'Racket',
-             id       => '',
              idv3     => { album => 'Racket', artist => 'Triple J' }
            },
 );
