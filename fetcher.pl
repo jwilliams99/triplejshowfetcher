@@ -10,7 +10,7 @@ use LWP::Simple qw(getstore);
 use File::Path qw(make_path remove_tree);
 
 my $host = 'http://www.abc.net.au';
-my $path = '/triplej/programs/';
+my $path = '/triplej/programs';
 
 my %shows = (
     sfl => {
@@ -20,10 +20,12 @@ my %shows = (
              idv3 => { album => 'Short Fast Loud', artist => 'Triple J' }
            },
     rac => {
-             showPath => '/the-racket/the-racket/8768858',
-             desc => 'Racket',
-             id   => '8768858',
-             idv3 => { album => 'Racket', artist => 'Triple J' }
+             showPath => '/the-racket',
+             lookfor  => '/the-racket/the-racket/', # what to look for when we parse the page looking for the show id
+             showURL  => '',                        # where we look to download the file that has the segments in it
+             desc     => 'Racket',
+             id       => '',
+             idv3     => { album => 'Racket', artist => 'Triple J' }
            },
 );
 my $sfl; my $rac;my $shows;
@@ -78,14 +80,34 @@ if (defined $opts{proxy}[1]){
     $ua->proxy(['http', 'https', 'ftp'], 'http://'.$opts{proxy}[1].'/');
 }
 
+# first we have to parse the show page to get the ID for the current show
 my $showUrl = $host.$path.$shows{ $show }->{showPath};
 print "Have show page: $showUrl\n";
-# now we have the url we need to go and ge the page
+
 my $r = $ua->get( $showUrl );
+print STDERR "Looking for show ID\n";
+print STDERR "Toke parsing for the show ID\n" if ($opts{debug}[1] > 0);
+my $idContent = $r->decoded_content;
+my $idP = HTML::TokeParser->new( \$idContent );
+while( my $t = $idP->get_tag("a") ){
+
+    if (defined $t->[1]->{href} && $t->[1]->{href} =~ /$shows{ $show }->{lookfor}/) {
+        print Dumper($t) if ($opts{debug}[1] > 0);
+        print "URL PATH $t->[1]->{href}\n" if ($opts{debug}[1] > 0);
+        $shows{ $show }->{showURL} = $t->[1]->{href};
+        print "Show URL = $shows{ $show }->{showURL}\n" if ($opts{debug}[1] > 0);
+
+    }
+
+}
+if ($shows{ $show }->{showURL} eq '') {
+    die "Cant find show URL";
+}
 
 # oncw we have the page, we need to parse it and look for 
 # the script tag that has a m3u8 file.  this file contains
 # a link to a file that has all the sengments to download
+$r = $ua->get($host.$shows{ $show }->{showURL});
 print Dumper($r->decoded_content) if ($opts{debug}[1] > 1);
 
 print STDERR "Toke parsing\n" if ($opts{debug}[1] > 0);
@@ -99,9 +121,11 @@ while( my $t = $p->get_tag("div") ){
 
     #print STDERR Dumper($t)  if ($opts{debug}[1] > 0);
     if (defined $t->[1]->{class} && $t->[1]->{class} eq 'comp-audio-player-player') {
+    print STDERR Dumper($t)  if ($opts{debug}[1] > 0);
         $p->get_tag("script","/script");
         my $c = $p->get_text();
         foreach my $line (split(/\n/, $c)) {
+print "$line\n" if ($opts{debug}[1] > 0);
             if ($line =~ /m3u8/) {
                 my @e = split(/\"/, $line);
                 print $e[3]."\n";
